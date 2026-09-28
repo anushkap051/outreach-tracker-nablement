@@ -17,7 +17,8 @@
   --bar-2: #8fb0f5;
 }
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
     --bg: #12151b;
     --surface: #1b2029;
     --surface-2: #232a35;
@@ -35,6 +36,25 @@
     --bar: #6d93f2;
     --bar-2: #3b5796;
   }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #12151b;
+  --surface: #1b2029;
+  --surface-2: #232a35;
+  --text: #e6e9ef;
+  --muted: #98a2b3;
+  --border: #2f3744;
+  --accent: #6d93f2;
+  --accent-text: #0e1320;
+  --danger: #ef6b5c;
+  --due: #ff7a6e;
+  --row-meeting: #1e2d4d;
+  --row-completed: #1d3524;
+  --row-won: #22502c;
+  --row-dead: #262b33;
+  --bar: #6d93f2;
+  --bar-2: #3b5796;
 }
 
 * { box-sizing: border-box; }
@@ -70,7 +90,7 @@ input:focus, select:focus, textarea:focus, button:focus-visible { outline: 2px s
 
 /* Top bar */
 .topbar {
-  position: sticky; top: 0; z-index: 5;
+  position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5;
   display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px;
   padding: 10px 16px;
   background: var(--surface);
@@ -192,6 +212,12 @@ legend { font-weight: 700; font-size: 12px; text-transform: uppercase; letter-sp
 .fields label.full { grid-column: 1 / -1; }
 .editor-foot { display: flex; gap: 8px; padding: 12px 18px; border-top: 1px solid var(--border); }
 .spacer { flex: 1; }
+.confirm { width: min(420px, calc(100vw - 32px)); }
+.confirm form { padding: 18px; display: flex; flex-direction: column; gap: 8px; }
+.confirm h2 { font-size: 17px; margin: 0; }
+.confirm p { margin: 0; }
+.confirm-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
+button.danger-fill { background: var(--danger); border-color: var(--danger); color: #fff; }
 
 #toast {
   position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%) translateY(20px);

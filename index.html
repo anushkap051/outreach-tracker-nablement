@@ -77,6 +77,17 @@
     </form>
   </dialog>
 
+  <dialog id="confirm" class="confirm">
+    <form method="dialog">
+      <h2 id="confirm-title"></h2>
+      <p id="confirm-body" class="muted"></p>
+      <div class="confirm-actions">
+        <button value="cancel" class="ghost">Cancel</button>
+        <button value="ok" id="confirm-ok" class="primary danger-fill">OK</button>
+      </div>
+    </form>
+  </dialog>
+
   <div id="toast" role="status"></div>
 
   <script src="data/seed.js"></script>

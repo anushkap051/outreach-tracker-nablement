@@ -9,9 +9,13 @@ Atlanta and Pittsburgh leads.
 No install or build step. Open `index.html` in a browser (double-click it), or
 host the folder anywhere that serves static files (for example GitHub Pages).
 
-Your changes are saved in that browser automatically. Use **Data → Download
-backup** now and then, and **Restore backup** to move your data to another
-computer or browser.
+Opened as a file, your changes are saved in that browser only. Use **Data →
+Download backup** now and then, and **Restore backup** to move your data to
+another computer or browser.
+
+When the app is published as a claude.ai artifact, it saves to the artifact's
+online database instead (one record per business under `businesses/`, and the
+weekly plan under `meta/plan`), so every device shows the same data.
 
 ## What's in it
 

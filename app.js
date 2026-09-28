@@ -84,14 +84,62 @@
     return freshState();
   }
   let storageOk = true;
-  function save() {
+  function saveLocal() {
     try { localStorage.setItem(KEY, JSON.stringify(state)); }
     catch (e) {
-      if (storageOk) toast('Could not save in this browser — use Data → Download backup');
+      if (storageOk) toast('Could not save in this browser. Use Data → Download backup.');
       storageOk = false;
     }
   }
-  let state = load();
+
+  // When the app is published on claude.ai, data lives in the artifact's shared
+  // database (one document per business, plus meta/plan) so every device sees
+  // the same data. Opened as a plain file, it falls back to browser storage.
+  const hasClaude = typeof window.claude === 'object' && window.claude && typeof window.claude.use === 'function';
+  let db = null;
+  let state = hasClaude ? { businesses: [], plan: clone(DEFAULT_PLAN) } : load();
+  let loaded = !hasClaude;
+
+  function reportWriteError(e) {
+    const code = e && e.code;
+    if (code === 'invalid_argument' || code === 'not_granted') toast('You have view-only access, so changes are not saved.');
+    else if (code === 'quota_exceeded') toast('Storage is full. Delete some businesses and try again.');
+    else toast('Could not save. Check your connection and try again.');
+  }
+  const cloudWrite = p => p.catch(reportWriteError);
+
+  const store = {
+    saveBusiness(b) { if (db) return cloudWrite(db.doc('businesses/' + b.id).set(clone(b))); saveLocal(); },
+    deleteBusiness(b) { if (db) return cloudWrite(db.doc('businesses/' + b.id).delete()); saveLocal(); },
+    savePlan() { if (db) return cloudWrite(db.doc('meta/plan').set({ rows: clone(state.plan) })); saveLocal(); },
+    async replaceAll(previous, businesses, plan) {
+      if (!db) { saveLocal(); return; }
+      const keep = new Set(businesses.map(b => b.id));
+      const old = previous.filter(b => !keep.has(b.id));
+      for (const b of old) await db.doc('businesses/' + b.id).delete();
+      for (const b of businesses) await db.doc('businesses/' + b.id).set(clone(b));
+      await db.doc('meta/plan').set({ rows: clone(plan) });
+    },
+  };
+
+  async function connectCloud() {
+    try { db = await window.claude.use('db'); } catch (e) { db = null; }
+    if (!db) {
+      state = load(); loaded = true; render();
+      toast('Online storage is unavailable here, so changes are saved in this browser only.');
+      return;
+    }
+    const byId = (a, b) => String(a.id).localeCompare(String(b.id), undefined, { numeric: true });
+    db.collection('businesses').onSnapshot(snap => {
+      state.businesses = snap.docs.map(d => Object.assign(blank(), clone(d.data()))).sort(byId);
+      loaded = true; filtersBuilt = false; render();
+    }, () => toast('Lost the connection to online storage. Reload the page.'));
+    db.doc('meta/plan').onSnapshot(snap => {
+      const rows = snap.exists && snap.data().rows;
+      state.plan = Array.isArray(rows) ? clone(rows) : clone(DEFAULT_PLAN);
+      if (currentView === 'plan' && !document.activeElement.closest('[data-plan]')) renderPlan();
+    });
+  }
 
   // ---------- Helpers ----------
   const $ = s => document.querySelector(s);
@@ -156,6 +204,13 @@
     render();
   }
   function render() {
+    if (!loaded) {
+      const el = $('#view-' + currentView);
+      const msg = '<p class="empty">Loading your businesses…</p>';
+      if (currentView === 'pipeline') $('#pipeline-table').innerHTML = `<tbody><tr><td>${msg}</td></tr></tbody>`;
+      else el.innerHTML = msg;
+      return;
+    }
     ({ today: renderToday, pipeline: renderPipeline, dashboard: renderDashboard, plan: renderPlan })[currentView]();
   }
 
@@ -379,6 +434,7 @@
     ].map(([l, s]) => `<button type="button" data-quick="${esc(s)}">${esc(l)}</button>`).join('')
       + `<button type="button" data-followup="2">Follow up in 2 days</button><button type="button" data-followup="7">in 1 week</button>`;
     $('#delete-btn').hidden = isNew;
+    $('#editor-form').elements.namedItem('id').readOnly = !isNew;
     dlg.showModal();
   }
 
@@ -395,16 +451,17 @@
     const vals = readForm();
     const prev = b.status;
     vals.business = vals.business.trim();
-    if (!vals.business) { toast('Business name is required'); return false; }
+    if (!vals.business) { toast('Enter a business name.'); return false; }
+    if (!editing.isNew) vals.id = b.id; // the ID is the record's key, so it stays fixed once created
     Object.assign(b, vals);
     applyStatusRules(b, prev);
     if (editing.isNew) {
-      if (!b.id) b.id = nextId(b.region, b.icp);
-      if (state.businesses.some(x => x.id === b.id)) { toast(`ID ${b.id} already exists`); return false; }
+      b.id = (b.id.trim() || nextId(b.region, b.icp)).replace(/[^A-Za-z0-9_\-.~:@+]+/g, '-');
+      if (state.businesses.some(x => x.id === b.id)) { toast(`ID ${b.id} is already used. Pick another or leave it blank.`); return false; }
       state.businesses.push(b);
     }
     touch(b);
-    save(); filtersBuilt = false; render();
+    store.saveBusiness(b); filtersBuilt = false; render();
     toast(editing.isNew ? 'Business added' : 'Saved');
     return true;
   }
@@ -422,23 +479,36 @@
         applyStatusRules(tmp, editing.business.status);
         ['contacted', 'firstContactDate', 'followUpNeeded', 'meetingScheduled', 'meetingCompleted'].forEach(k => setField(k, tmp[k]));
       }
-      toast('Updated — press Save to keep');
+      toast('Updated. Press Save to keep it.');
     }
     const fu = e.target.closest('[data-followup]');
     if (fu) {
       const d = new Date(); d.setDate(d.getDate() + Number(fu.dataset.followup));
       setField('followUpNeeded', 'Yes');
       setField('followUpDate', `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`);
-      toast('Follow-up set — press Save to keep');
+      toast('Follow-up set. Press Save to keep it.');
     }
     if (e.target.closest('[data-close]')) dlg.close();
   });
-  $('#delete-btn').addEventListener('click', () => {
+  $('#delete-btn').addEventListener('click', async () => {
     const b = editing.business;
-    if (!confirm(`Delete ${b.business}? This can't be undone (unless you have a backup).`)) return;
+    if (!await ask(`Delete ${b.business}?`, 'This removes it from the tracker. Download a backup first if you might want it back.', 'Delete')) return;
     state.businesses = state.businesses.filter(x => x !== b);
-    save(); dlg.close(); filtersBuilt = false; render(); toast('Deleted');
+    store.deleteBusiness(b); dlg.close(); filtersBuilt = false; render(); toast('Deleted');
   });
+
+  // In-page confirmation (browser confirm() popups are blocked on claude.ai).
+  function ask(title, body, okLabel) {
+    const d = $('#confirm');
+    $('#confirm-title').textContent = title;
+    $('#confirm-body').textContent = body;
+    $('#confirm-ok').textContent = okLabel;
+    d.returnValue = '';
+    d.showModal();
+    return new Promise(resolve => {
+      d.addEventListener('close', () => resolve(d.returnValue === 'ok'), { once: true });
+    });
+  }
 
   // ---------- Events ----------
   document.querySelectorAll('.tabs button').forEach(btn => btn.addEventListener('click', () => show(btn.dataset.view)));
@@ -461,14 +531,16 @@
     const sel = e.target.closest('select[data-status]');
     if (sel) {
       const b = state.businesses.find(x => x.id === sel.dataset.status);
-      const prev = b.status; b.status = sel.value; applyStatusRules(b, prev); touch(b); save(); renderPipeline();
+      const prev = b.status; b.status = sel.value; applyStatusRules(b, prev); touch(b); store.saveBusiness(b); renderPipeline();
       toast(`${b.business}: ${b.status}`);
     }
     const p = e.target.closest('[data-plan]');
-    if (p) { state.plan[p.dataset.plan][p.dataset.k] = p.value; save(); renderPlan(); }
+    if (p) { state.plan[p.dataset.plan][p.dataset.k] = p.value; store.savePlan(); renderPlan(); }
   });
-  document.addEventListener('click', e => {
-    if (e.target.id === 'plan-reset' && confirm('Reset the weekly plan text and targets?')) { state.plan = clone(DEFAULT_PLAN); save(); renderPlan(); }
+  document.addEventListener('click', async e => {
+    if (e.target.id !== 'plan-reset') return;
+    if (!await ask('Reset the weekly plan?', 'The plan text, targets and notes go back to the original spreadsheet version.', 'Reset plan')) return;
+    state.plan = clone(DEFAULT_PLAN); store.savePlan(); renderPlan();
   });
 
   FILTERS.forEach(([sel]) => $(sel).addEventListener('change', renderPipeline));
@@ -476,7 +548,13 @@
   $('#f-clear').addEventListener('click', () => { FILTERS.forEach(([sel]) => { $(sel).value = ''; }); $('#f-search').value = ''; renderPipeline(); });
 
   // ---------- Import / export ----------
-  function download(name, text, type) {
+  let downloads = null;
+  async function download(name, text, type) {
+    if (downloads) {
+      try { await downloads.save({ filename: name, data: text }); toast('Saved ' + name); }
+      catch (e) { if (e && e.code !== 'declined') toast('Could not save the file here.'); }
+      return;
+    }
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([text], { type }));
     a.download = name; document.body.appendChild(a); a.click(); a.remove();
@@ -487,31 +565,43 @@
     const cols = [...ALL_FIELDS, ['lastUpdated', 'Last updated']];
     const cell = v => { const s = String(v ?? ''); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
     const csv = [cols.map(c => cell(c[1])).join(','), ...state.businesses.map(b => cols.map(([k]) => cell(b[k])).join(','))].join('\n');
-    download(`beacon-outreach-${todayISO()}.csv`, '﻿' + csv, 'text/csv');
     closeMenu();
+    download(`beacon-outreach-${todayISO()}.csv`, '\ufeff' + csv, 'text/csv');
   });
   $('#export-json').addEventListener('click', () => {
-    download(`beacon-outreach-backup-${todayISO()}.json`, JSON.stringify(state, null, 2), 'application/json');
     closeMenu();
+    download(`beacon-outreach-backup-${todayISO()}.json`, JSON.stringify(state, null, 2), 'application/json');
   });
   $('#import-json').addEventListener('change', async e => {
-    const file = e.target.files[0]; if (!file) return;
+    const file = e.target.files[0]; e.target.value = ''; closeMenu();
+    if (!file) return;
+    let s;
     try {
-      const s = JSON.parse(await file.text());
-      if (!Array.isArray(s.businesses)) throw new Error('bad file');
-      if (!confirm(`Replace current data with ${s.businesses.length} businesses from this backup?`)) return;
-      state = { businesses: s.businesses.map(b => Object.assign(blank(), b)), plan: Array.isArray(s.plan) ? s.plan : clone(DEFAULT_PLAN) };
-      save(); filtersBuilt = false; render(); toast('Backup restored');
-    } catch (err) { toast('That file is not a valid backup'); }
-    e.target.value = ''; closeMenu();
+      s = JSON.parse(await file.text());
+      if (!Array.isArray(s.businesses) || s.businesses.some(b => !b || !b.id)) throw new Error('bad file');
+    } catch (err) { toast('That file is not a tracker backup. Choose a .json file from Download backup.'); return; }
+    if (!await ask('Restore this backup?', `Your current data is replaced with the ${s.businesses.length} businesses in the backup.`, 'Restore')) return;
+    const businesses = s.businesses.map(b => Object.assign(blank(), b, { lastUpdated: b.lastUpdated || '' }));
+    const plan = Array.isArray(s.plan) ? s.plan : clone(DEFAULT_PLAN);
+    const previous = state.businesses;
+    state = { businesses, plan };
+    filtersBuilt = false; render();
+    await store.replaceAll(previous, businesses, plan).then(() => toast('Backup restored'), reportWriteError);
   });
-  $('#reset-data').addEventListener('click', () => {
-    if (!confirm('Discard all changes and reload the original spreadsheet data? Download a backup first if unsure.')) return;
-    state = freshState(); save(); filtersBuilt = false; render(); toast('Reset to original data'); closeMenu();
+  $('#reset-data').addEventListener('click', async () => {
+    closeMenu();
+    if (!await ask('Reset to the original spreadsheet?', 'All your changes are discarded. Download a backup first if you are unsure.', 'Reset')) return;
+    state = freshState(); saveLocal(); filtersBuilt = false; render(); toast('Reset to original data');
   });
 
   // ---------- Start ----------
   let startView = 'today';
   try { startView = localStorage.getItem(KEY + '-view') || 'today'; } catch (e) { /* ignore */ }
+  // Resetting needs the bundled spreadsheet data, which only the file version carries.
+  $('#reset-data').hidden = hasClaude || !window.SEED_BUSINESSES;
   show(['today', 'pipeline', 'dashboard', 'plan'].includes(startView) ? startView : 'today');
+  if (hasClaude) {
+    connectCloud();
+    window.claude.use('downloads').then(d => { downloads = d; }, () => {});
+  }
 })();
