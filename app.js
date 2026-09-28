@@ -73,18 +73,22 @@
     }
   }
 
-  // When the app is published on claude.ai, data lives in the artifact's shared
-  // database (one document per business) so every device sees
-  // the same data. Opened as a plain file, it falls back to browser storage.
-  const hasClaude = typeof window.claude === 'object' && window.claude && typeof window.claude.use === 'function';
+  // Where data lives depends on how the app is opened:
+  // - Hosted with firebase-config.js filled in: Firebase (Google sign-in + Firestore).
+  // - Published on claude.ai: the artifact's shared database.
+  // - Opened as a plain file: this browser's storage.
+  // Both online stores keep one document per business in a "businesses" collection.
+  const FB = window.FIREBASE_CONFIG && window.FIREBASE_CONFIG.apiKey ? window.FIREBASE_CONFIG : null;
+  const hasClaude = !FB && typeof window.claude === 'object' && window.claude && typeof window.claude.use === 'function';
+  const online = !!FB || hasClaude;
   let db = null;
-  let state = hasClaude ? { businesses: [] } : load();
-  let loaded = !hasClaude;
+  let state = online ? { businesses: [] } : load();
+  let loaded = !online;
 
   function reportWriteError(e) {
     const code = e && e.code;
-    if (code === 'invalid_argument' || code === 'not_granted') toast('You have view-only access, so changes are not saved.');
-    else if (code === 'quota_exceeded') toast('Storage is full. Delete some businesses and try again.');
+    if (code === 'invalid_argument' || code === 'not_granted' || code === 'permission-denied') toast('Your account can\'t make changes here, so this was not saved.');
+    else if (code === 'quota_exceeded' || code === 'resource-exhausted') toast('Storage is full. Delete some businesses and try again.');
     else toast('Could not save. Check your connection and try again.');
   }
   const cloudWrite = p => p.catch(reportWriteError);
@@ -101,18 +105,82 @@
     },
   };
 
-  async function connectCloud() {
+  const byId = (a, b) => String(a.id).localeCompare(String(b.id), undefined, { numeric: true });
+  function subscribe(onDenied) {
+    return db.collection('businesses').onSnapshot(snap => {
+      state.businesses = snap.docs.map(d => Object.assign(blank(), clone(d.data()))).sort(byId);
+      loaded = true; filtersBuilt = false; render();
+    }, e => {
+      if (onDenied && e && e.code === 'permission-denied') onDenied();
+      else toast('Lost the connection to online storage. Reload the page.');
+    });
+  }
+
+  async function connectClaude() {
     try { db = await window.claude.use('db'); } catch (e) { db = null; }
     if (!db) {
       state = load(); loaded = true; render();
       toast('Online storage is unavailable here, so changes are saved in this browser only.');
       return;
     }
-    const byId = (a, b) => String(a.id).localeCompare(String(b.id), undefined, { numeric: true });
-    db.collection('businesses').onSnapshot(snap => {
-      state.businesses = snap.docs.map(d => Object.assign(blank(), clone(d.data()))).sort(byId);
-      loaded = true; filtersBuilt = false; render();
-    }, () => toast('Lost the connection to online storage. Reload the page.'));
+    subscribe();
+  }
+
+  // ----- Firebase (hosted version) -----
+  const FB_SDK = 'https://www.gstatic.com/firebasejs/10.14.1/';
+  const loadScript = src => new Promise((resolve, reject) => {
+    const el = document.createElement('script');
+    el.src = src; el.onload = resolve; el.onerror = () => reject(new Error('Could not load ' + src));
+    document.head.appendChild(el);
+  });
+  function showSignIn(message) {
+    $('#signin').hidden = false;
+    $('#signin-msg').textContent = message || '';
+    $('#signin-btn').disabled = false;
+  }
+  async function connectFirebase() {
+    showSignIn('');
+    $('#signin-btn').disabled = true;
+    try {
+      for (const f of ['firebase-app-compat.js', 'firebase-auth-compat.js', 'firebase-firestore-compat.js']) await loadScript(FB_SDK + f);
+    } catch (e) {
+      showSignIn('Could not reach Google. Check your internet connection and reload.');
+      $('#signin-btn').disabled = true;
+      return;
+    }
+    firebase.initializeApp(FB);
+    const auth = firebase.auth();
+    let unsubscribe = null;
+
+    $('#signin-btn').addEventListener('click', async () => {
+      const provider = new firebase.auth.GoogleAuthProvider();
+      provider.setCustomParameters({ prompt: 'select_account' });
+      try { await auth.signInWithPopup(provider); }
+      catch (e) {
+        if (e.code === 'auth/popup-blocked' || e.code === 'auth/operation-not-supported-in-this-environment') auth.signInWithRedirect(provider);
+        else if (e.code === 'auth/unauthorized-domain') showSignIn('This web address isn\'t allowed to sign in yet. Add it under Firebase → Authentication → Settings → Authorized domains.');
+        else if (e.code !== 'auth/popup-closed-by-user' && e.code !== 'auth/cancelled-popup-request') showSignIn('Sign-in didn\'t work. Try again.');
+      }
+    });
+    $('#signout-btn').addEventListener('click', () => { $('.menu').removeAttribute('open'); auth.signOut(); });
+
+    auth.onAuthStateChanged(user => {
+      if (unsubscribe) { unsubscribe(); unsubscribe = null; }
+      if (!user) {
+        db = null; state = { businesses: [] }; loaded = false;
+        $('#account').hidden = true; $('#signout-btn').hidden = true;
+        showSignIn('');
+        return;
+      }
+      $('#signin').hidden = true;
+      $('#account').hidden = false; $('#account').textContent = user.email;
+      $('#signout-btn').hidden = false;
+      db = firebase.firestore();
+      unsubscribe = subscribe(() => {
+        const email = user.email;
+        auth.signOut().then(() => showSignIn(`${email} doesn't have access to this tracker. Sign in with the Google account it was set up for.`));
+      });
+    });
   }
 
   // ---------- Helpers ----------
@@ -216,7 +284,9 @@
       [bs.filter(b => b.meetingScheduled === 'Yes').length, 'Meetings scheduled'],
       [bs.filter(b => b.dealWon === 'Yes').length, 'Deals won'],
     ];
-    $('#view-today').innerHTML = `
+    const emptyHint = !bs.length ? `<div class="card" style="margin-bottom:16px"><h2>No businesses yet</h2>
+      <p class="muted">Use <strong>+ Add business</strong>, or bring in your existing list with <strong>Data → Restore backup</strong>.</p></div>` : '';
+    $('#view-today').innerHTML = emptyHint + `
       <div class="stats">${stats.map(([n, l]) => `<div class="stat"><div class="num">${n}</div><div class="lbl">${l}</div></div>`).join('')}</div>
       <div class="grid">
         ${listCard('Follow-ups due today or overdue', due.map(b => listItem(b,
@@ -543,10 +613,11 @@
   let startView = 'today';
   try { startView = localStorage.getItem(KEY + '-view') || 'today'; } catch (e) { /* ignore */ }
   // Resetting needs the bundled spreadsheet data, which only the file version carries.
-  $('#reset-data').hidden = hasClaude || !window.SEED_BUSINESSES;
+  $('#reset-data').hidden = online || !window.SEED_BUSINESSES;
   show(['today', 'pipeline', 'dashboard'].includes(startView) ? startView : 'today');
-  if (hasClaude) {
-    connectCloud();
+  if (FB) connectFirebase();
+  else if (hasClaude) {
+    connectClaude();
     window.claude.use('downloads').then(d => { downloads = d; }, () => {});
   }
 })();

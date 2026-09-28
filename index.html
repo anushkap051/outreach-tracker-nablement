@@ -15,6 +15,7 @@
       <button data-view="dashboard">Dashboard</button>
     </nav>
     <div class="actions">
+      <span id="account" class="account muted" hidden></span>
       <button id="add-btn" class="primary">+ Add business</button>
       <details class="menu">
         <summary>Data</summary>
@@ -23,6 +24,7 @@
           <button id="export-json">Download backup (.json)</button>
           <label class="file-btn">Restore backup (.json)<input type="file" id="import-json" accept=".json,application/json" hidden></label>
           <button id="reset-data" class="danger">Reset to original spreadsheet</button>
+          <button id="signout-btn" hidden>Sign out</button>
         </div>
       </details>
     </div>
@@ -86,9 +88,18 @@
     </form>
   </dialog>
 
+  <section id="signin" class="signin" hidden>
+    <div class="signin-card">
+      <h1>Beacon Outreach</h1>
+      <p class="muted">Track calls, visits, follow-ups and meetings with Atlanta and Pittsburgh small businesses.</p>
+      <button id="signin-btn" class="primary">Sign in with Google</button>
+      <p id="signin-msg" class="signin-msg" role="alert"></p>
+    </div>
+  </section>
+
   <div id="toast" role="status"></div>
 
-  <script src="data/seed.js"></script>
+  <script src="firebase-config.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
