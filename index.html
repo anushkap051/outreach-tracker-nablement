@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Beacon Outreach Tracker</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <h1>Beacon Outreach</h1>
+    <nav class="tabs" role="tablist">
+      <button data-view="today" class="active">Today</button>
+      <button data-view="pipeline">Pipeline</button>
+      <button data-view="dashboard">Dashboard</button>
+      <button data-view="plan">Weekly Plan</button>
+    </nav>
+    <div class="actions">
+      <button id="add-btn" class="primary">+ Add business</button>
+      <details class="menu">
+        <summary>Data</summary>
+        <div class="menu-list">
+          <button id="export-csv">Export CSV (for Sheets/Excel)</button>
+          <button id="export-json">Download backup (.json)</button>
+          <label class="file-btn">Restore backup (.json)<input type="file" id="import-json" accept=".json,application/json" hidden></label>
+          <button id="reset-data" class="danger">Reset to original spreadsheet</button>
+        </div>
+      </details>
+    </div>
+  </header>
+
+  <main>
+    <section id="view-today" class="view active"></section>
+
+    <section id="view-pipeline" class="view">
+      <div class="filters">
+        <input type="search" id="f-search" placeholder="Search business, contact, notes…">
+        <select id="f-region"></select>
+        <select id="f-icp"></select>
+        <select id="f-sector"></select>
+        <select id="f-status"></select>
+        <select id="f-priority"></select>
+        <select id="f-day"></select>
+        <button id="f-clear" class="ghost">Clear</button>
+      </div>
+      <p class="legend">
+        <span class="sw row-meeting"></span>Meeting scheduled
+        <span class="sw row-completed"></span>Meeting completed
+        <span class="sw row-won"></span>Deal won
+        <span class="sw row-dead"></span>Not interested / not a fit
+        <span class="due-tag">Due</span>Follow-up due
+      </p>
+      <div class="table-wrap"><table id="pipeline-table"></table></div>
+    </section>
+
+    <section id="view-dashboard" class="view"></section>
+    <section id="view-plan" class="view"></section>
+  </main>
+
+  <dialog id="editor">
+    <form method="dialog" id="editor-form">
+      <header class="editor-head">
+        <div>
+          <h2 id="editor-title">Business</h2>
+          <p id="editor-sub" class="muted"></p>
+        </div>
+        <button type="button" class="ghost close" data-close aria-label="Close">✕</button>
+      </header>
+      <div class="quick" id="quick-actions"></div>
+      <div id="editor-fields"></div>
+      <footer class="editor-foot">
+        <button type="button" id="delete-btn" class="danger ghost">Delete</button>
+        <span class="spacer"></span>
+        <button type="button" data-close class="ghost">Cancel</button>
+        <button type="submit" class="primary">Save</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <div id="toast" role="status"></div>
+
+  <script src="data/seed.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
