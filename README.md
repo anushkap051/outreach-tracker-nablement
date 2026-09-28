@@ -14,8 +14,8 @@ Download backup** now and then, and **Restore backup** to move your data to
 another computer or browser.
 
 When the app is published as a claude.ai artifact, it saves to the artifact's
-online database instead (one record per business under `businesses/`, and the
-weekly plan under `meta/plan`), so every device shows the same data.
+online database instead (one record per business under `businesses/`), so
+every device shows the same data.
 
 ## What's in it
 
@@ -32,8 +32,6 @@ weekly plan under `meta/plan`), so every device shows the same data.
   fields: Visited/Called, First Contact Date, Meeting Scheduled and so on.
 - **Dashboard**: pipeline by region and ICP, contact and meeting rates, the
   ICP leads → opportunities → wins table, results by sector, and objections.
-- **Weekly Plan**: the day-by-day plan with editable targets and notes, and a
-  "Done" count that updates from the pipeline.
 - **Export CSV** to open the data in Google Sheets or Excel.
 
 ## Files

@@ -46,39 +46,20 @@
   const ALL_FIELDS = GROUPS.flatMap(g => g.fields);
   const WIDE = new Set(['whyFits', 'pitch', 'meetingNotes', 'nextStep', 'business', 'address']);
 
-  const DEFAULT_PLAN = [
-    { day: 'Sunday', plan: 'Prepare what to say / what info is important', target: '', notes: '' },
-    { day: 'Monday', plan: 'Visit at least 5 businesses from ICP A', target: 5, notes: '' },
-    { day: 'Tuesday', plan: 'Call/text businesses from ICP B', target: 8, notes: '' },
-    { day: 'Wednesday', plan: 'Visit remaining businesses from ICP A', target: 2, notes: '' },
-    { day: 'Thursday', plan: 'Loose ends with ICP B, follow-up messages', target: '', notes: '' },
-    { day: 'Friday', plan: 'Finish anything unfinished; make sure most/all meetings are set up or in progress', target: '', notes: '' },
-    { day: 'Pittsburgh', plan: 'Call/text Franklin Park leads (no days assigned yet)', target: 25, notes: '' },
-  ];
-  // How the "Done" column is counted for each plan row (same logic as the spreadsheet formulas).
-  const PLAN_DONE = {
-    Monday: { label: 'Atlanta ICP A, planned Monday, contacted', fn: b => b.region === 'Atlanta' && b.icp === 'A' && b.plannedDay === 'Monday' && b.contacted === 'Yes' },
-    Tuesday: { label: 'Atlanta ICP B contacted', fn: b => b.region === 'Atlanta' && b.icp === 'B' && b.contacted === 'Yes' },
-    Wednesday: { label: 'Atlanta ICP A, planned Wednesday, contacted', fn: b => b.region === 'Atlanta' && b.icp === 'A' && b.plannedDay === 'Wednesday' && b.contacted === 'Yes' },
-    Thursday: { label: 'Open Atlanta follow-ups remaining', fn: b => b.region === 'Atlanta' && b.followUpNeeded === 'Yes' && b.meetingCompleted !== 'Yes' },
-    Friday: { label: 'Atlanta meetings scheduled', fn: b => b.region === 'Atlanta' && b.meetingScheduled === 'Yes' },
-    Pittsburgh: { label: 'Pittsburgh leads contacted', fn: b => b.region === 'Pittsburgh' && b.contacted === 'Yes' },
-  };
-
   // ---------- Storage ----------
   const KEY = 'beacon-outreach-v1';
   const blank = () => Object.fromEntries(ALL_FIELDS.map(([k]) => [k, '']));
   const clone = x => JSON.parse(JSON.stringify(x));
 
   function freshState() {
-    return { businesses: clone(window.SEED_BUSINESSES || []).map(b => Object.assign(blank(), b, { lastUpdated: b.lastUpdated || '' })), plan: clone(DEFAULT_PLAN) };
+    return { businesses: clone(window.SEED_BUSINESSES || []).map(b => Object.assign(blank(), b, { lastUpdated: b.lastUpdated || '' })) };
   }
   function load() {
     try {
       const raw = localStorage.getItem(KEY);
       if (raw) {
         const s = JSON.parse(raw);
-        if (Array.isArray(s.businesses)) return { businesses: s.businesses, plan: Array.isArray(s.plan) ? s.plan : clone(DEFAULT_PLAN) };
+        if (Array.isArray(s.businesses)) return { businesses: s.businesses };
       }
     } catch (e) { /* fall through to seed data */ }
     return freshState();
@@ -93,11 +74,11 @@
   }
 
   // When the app is published on claude.ai, data lives in the artifact's shared
-  // database (one document per business, plus meta/plan) so every device sees
+  // database (one document per business) so every device sees
   // the same data. Opened as a plain file, it falls back to browser storage.
   const hasClaude = typeof window.claude === 'object' && window.claude && typeof window.claude.use === 'function';
   let db = null;
-  let state = hasClaude ? { businesses: [], plan: clone(DEFAULT_PLAN) } : load();
+  let state = hasClaude ? { businesses: [] } : load();
   let loaded = !hasClaude;
 
   function reportWriteError(e) {
@@ -111,14 +92,12 @@
   const store = {
     saveBusiness(b) { if (db) return cloudWrite(db.doc('businesses/' + b.id).set(clone(b))); saveLocal(); },
     deleteBusiness(b) { if (db) return cloudWrite(db.doc('businesses/' + b.id).delete()); saveLocal(); },
-    savePlan() { if (db) return cloudWrite(db.doc('meta/plan').set({ rows: clone(state.plan) })); saveLocal(); },
-    async replaceAll(previous, businesses, plan) {
+    async replaceAll(previous, businesses) {
       if (!db) { saveLocal(); return; }
       const keep = new Set(businesses.map(b => b.id));
       const old = previous.filter(b => !keep.has(b.id));
       for (const b of old) await db.doc('businesses/' + b.id).delete();
       for (const b of businesses) await db.doc('businesses/' + b.id).set(clone(b));
-      await db.doc('meta/plan').set({ rows: clone(plan) });
     },
   };
 
@@ -134,11 +113,6 @@
       state.businesses = snap.docs.map(d => Object.assign(blank(), clone(d.data()))).sort(byId);
       loaded = true; filtersBuilt = false; render();
     }, () => toast('Lost the connection to online storage. Reload the page.'));
-    db.doc('meta/plan').onSnapshot(snap => {
-      const rows = snap.exists && snap.data().rows;
-      state.plan = Array.isArray(rows) ? clone(rows) : clone(DEFAULT_PLAN);
-      if (currentView === 'plan' && !document.activeElement.closest('[data-plan]')) renderPlan();
-    });
   }
 
   // ---------- Helpers ----------
@@ -211,7 +185,7 @@
       else el.innerHTML = msg;
       return;
     }
-    ({ today: renderToday, pipeline: renderPipeline, dashboard: renderDashboard, plan: renderPlan })[currentView]();
+    ({ today: renderToday, pipeline: renderPipeline, dashboard: renderDashboard })[currentView]();
   }
 
   function listItem(b, right) {
@@ -384,27 +358,6 @@
       </div>`;
   }
 
-  // Weekly plan
-  function renderPlan() {
-    const rows = state.plan.map((p, i) => {
-      const rule = PLAN_DONE[p.day];
-      const done = rule ? state.businesses.filter(rule.fn).length : '';
-      const target = Number(p.target) || 0;
-      const prog = rule && target ? `<div class="progress"><div style="width:${Math.min(100, (done / target) * 100)}%"></div></div>` : '';
-      return `<tr>
-        <td><strong>${esc(p.day)}</strong></td>
-        <td><textarea rows="2" data-plan="${i}" data-k="plan">${esc(p.plan)}</textarea></td>
-        <td><input type="number" min="0" data-plan="${i}" data-k="target" value="${esc(p.target)}"></td>
-        <td>${rule ? `<strong>${done}</strong>${target ? ` / ${target}` : ''}${prog}<div class="meta muted">${esc(rule.label)}</div>` : '<span class="muted">—</span>'}</td>
-        <td><textarea rows="2" data-plan="${i}" data-k="notes">${esc(p.notes)}</textarea></td>
-      </tr>`;
-    }).join('');
-    $('#view-plan').innerHTML = `<div class="card"><h2>Weekly plan</h2>
-      <p class="muted">"Done" is counted automatically from the pipeline. Plan, target and notes are editable.</p>
-      <div class="table-wrap"><table class="plan-table"><thead><tr><th>Day</th><th>Plan</th><th>Target</th><th>Done</th><th>Notes</th></tr></thead><tbody>${rows}</tbody></table></div>
-      <p style="margin-top:10px"><button id="plan-reset" class="ghost">Reset plan to default</button></p></div>`;
-  }
-
   // ---------- Editor ----------
   const dlg = $('#editor');
   let editing = null; // { business, isNew }
@@ -534,13 +487,6 @@
       const prev = b.status; b.status = sel.value; applyStatusRules(b, prev); touch(b); store.saveBusiness(b); renderPipeline();
       toast(`${b.business}: ${b.status}`);
     }
-    const p = e.target.closest('[data-plan]');
-    if (p) { state.plan[p.dataset.plan][p.dataset.k] = p.value; store.savePlan(); renderPlan(); }
-  });
-  document.addEventListener('click', async e => {
-    if (e.target.id !== 'plan-reset') return;
-    if (!await ask('Reset the weekly plan?', 'The plan text, targets and notes go back to the original spreadsheet version.', 'Reset plan')) return;
-    state.plan = clone(DEFAULT_PLAN); store.savePlan(); renderPlan();
   });
 
   FILTERS.forEach(([sel]) => $(sel).addEventListener('change', renderPipeline));
@@ -582,11 +528,10 @@
     } catch (err) { toast('That file is not a tracker backup. Choose a .json file from Download backup.'); return; }
     if (!await ask('Restore this backup?', `Your current data is replaced with the ${s.businesses.length} businesses in the backup.`, 'Restore')) return;
     const businesses = s.businesses.map(b => Object.assign(blank(), b, { lastUpdated: b.lastUpdated || '' }));
-    const plan = Array.isArray(s.plan) ? s.plan : clone(DEFAULT_PLAN);
     const previous = state.businesses;
-    state = { businesses, plan };
+    state = { businesses };
     filtersBuilt = false; render();
-    await store.replaceAll(previous, businesses, plan).then(() => toast('Backup restored'), reportWriteError);
+    await store.replaceAll(previous, businesses).then(() => toast('Backup restored'), reportWriteError);
   });
   $('#reset-data').addEventListener('click', async () => {
     closeMenu();
@@ -599,7 +544,7 @@
   try { startView = localStorage.getItem(KEY + '-view') || 'today'; } catch (e) { /* ignore */ }
   // Resetting needs the bundled spreadsheet data, which only the file version carries.
   $('#reset-data').hidden = hasClaude || !window.SEED_BUSINESSES;
-  show(['today', 'pipeline', 'dashboard', 'plan'].includes(startView) ? startView : 'today');
+  show(['today', 'pipeline', 'dashboard'].includes(startView) ? startView : 'today');
   if (hasClaude) {
     connectCloud();
     window.claude.use('downloads').then(d => { downloads = d; }, () => {});

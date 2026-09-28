@@ -185,12 +185,6 @@ td select { width: auto; padding: 3px 6px; font-size: 13px; }
 .funnel-fill { background: var(--bar); height: 100%; border-radius: 6px; }
 .funnel-row .n { text-align: right; font-variant-numeric: tabular-nums; }
 
-/* Weekly plan */
-.plan-table td { white-space: normal; }
-.plan-table input { min-width: 60px; }
-.progress { background: var(--surface-2); border-radius: 6px; height: 8px; overflow: hidden; margin-top: 4px; min-width: 80px; }
-.progress > div { background: var(--bar); height: 100%; }
-
 /* Editor dialog */
 dialog {
   border: 1px solid var(--border); border-radius: 14px; padding: 0;
